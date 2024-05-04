@@ -1,6 +1,6 @@
 """ HW10 - Object detection and tracking using image keypoints and descriptors.
     
-    This script use image keypoints and descriptors to develop an object
+    This script use SIFT keypoints and descriptors to develop an object
     detection and tracking application using Python programming.
 
     Authors: Jorge Rodrigo Gómez Mayo 
@@ -8,8 +8,12 @@
     Organization: Universidad de Monterrey
     First created on Monday 29 April 2024
 
-    Usage Example:
-        py hw10.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4 -scale 15 -demo True
+    Usage Examples:
+        Only with requiered arguments:
+            py hw10.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4
+        
+        With all arguments:
+            py hw10.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4 -scale 15 -demo True
 """
 # Import std libraries
 import argparse
@@ -24,8 +28,8 @@ def parse_user_data() -> tuple[str, str]:
     Returns:
         tuple[str, str]: A tuple containing the path to the object image and the input image.
     """
-    parser = argparse.ArgumentParser(prog='HW10 ',
-                                    description='Description', 
+    parser = argparse.ArgumentParser(prog='CV - HW10',
+                                    description="Object detection and tracking application based on SIFT keypoints and descriptors.", 
                                     epilog=' JRGM - 2024')
     parser.add_argument('-obj',
                         '--object_image',
@@ -40,13 +44,15 @@ def parse_user_data() -> tuple[str, str]:
     parser.add_argument('-scale',
                         '--scale_percentage',
                         type=float,
-                        required=True,
-                        help="A value between 0 and 100 to indicate the rezise factor")
+                        required=False,
+                        help="A value between 0 and 100 to indicate the rezise factor",
+                        default=15)
     parser.add_argument('-demo',
                         '--demo_mode',
                         type=str,
-                        required=True,
-                        help="Enable/Disable Demo mode")
+                        required=False,
+                        help="Enable/Disable Demo mode",
+                        default="False")
     
     args = parser.parse_args()
     return args
@@ -206,6 +212,44 @@ def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask
     img = cv2.drawMatchesKnn(img_1["path"], img_1["features"]["kp"], img_2["frame"], img_2["features"]["kp"], matches, None, **draw_params)
     return img
 
+def draw_rectangle(img, centroid, width=100, height=100, color=(0,0,255)):
+    """
+    Draw a straight bounding rectangle around a set of points.
+
+    Args:
+        frame (np.ndarray): The image on which to draw the rectangle.
+        points (list of tuples): The points around which to draw the bounding rectangle.
+
+    Returns:
+        np.ndarray: The image with the bounding rectangle drawn.
+    """
+    if centroid:
+        centroid_x, centroid_y = centroid
+        # Calculate top-left corner of the rectangle
+        top_left_x = int(centroid_x - width / 2)
+        top_left_y = int(centroid_y - height / 2)
+        # Draw the rectangle
+        cv2.rectangle(img, (top_left_x, top_left_y), (top_left_x + width, top_left_y + height), color, 2)
+    return img
+
+def initialize_kalman():
+    kalman = cv2.KalmanFilter(4, 2)
+    kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+    kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
+    kalman.processNoiseCov = 1e-4 * np.eye(4, dtype=np.float32) # Adjust this for more/less prediction noise
+    kalman.measurementNoiseCov = 1e-4 * np.array([[1, 0], [0, 1]], np.float32) # Adjust this for more/less measurement noise
+    kalman.errorCovPost = 1e-1 * np.eye(4, dtype=np.float32)
+    return kalman
+
+def update_kalman(kalman, measurement):
+    predicted = kalman.predict()
+    corrected = kalman.correct(measurement)
+    corrected_x = int(corrected[0][0])
+    corrected_y = int(corrected[1][0])
+    predicted_x = int(predicted[0][0])
+    predicted_y = int(predicted[1][0])
+    return corrected_x, corrected_y, predicted_x, predicted_y
+
 def run_pipeline():
     """
     Execute the object detection and tracking pipeline.
@@ -223,10 +267,28 @@ def run_pipeline():
     run =   {"scale": "",
             "mode": ""}
     
+    # "Running" symbols list
+    symbols = ["\u22ee","\u22f0","\u22ef","\u22f1"]
+    
+    # Counters, buffers and accumulators
+    i_max = len(symbols)
+    i = 0
+    frames_since_last_detection = 0
+    max_frames_without_detection = 5
+    val_l_2_r = 0                       # Counter for left to right crossings
+    val_r_2_l = 0                       # Counter for right to left crossing
+    centroid_x_buffer = []              # Buffer to store the last few centroid's x positions
+    buffer_size = 3                     # Size of the centroid buffer
+    
     # Parse user's input data
     user_input = parse_user_data()
     run["scale"] = user_input.scale_percentage
     run["mode"] = str.lower(user_input.demo_mode)
+
+    # Initialize Kalman Filter
+    print("                                                  ", end="\r")
+    print("Initializing Kalman Filter...", end="\r")
+    kalman = initialize_kalman()
     
     # Load images
     print("                                                  ", end="\r")
@@ -264,21 +326,28 @@ def run_pipeline():
     
     # Initialize video frame loop
     print("                                                  ", end="\r")
-    symbols = ["\u22ee","\u22f0","\u22ef","\u22f1"]
-    i_max = len(symbols)
-    i = 0
     while True:
+        i = i % i_max
+        print("Tracking {0}".format(symbols[i]), end="\r")
         ret, scene["frame"] = scene["path"].read()
         if not ret:
             break
 
-        i = i % i_max
-        print("Tracking {0}".format(symbols[i]), end="\r")
         # Create an HSV copy of the frame
         hsv_frame = cv2.cvtColor(copy.deepcopy(scene["frame"]), cv2.COLOR_BGR2HSV)
 
         # Create a copy of the frame where all the additions will be made
         tracking_frame = copy.deepcopy(scene["frame"])
+
+        # Get frame dimensions
+        height, width = tracking_frame.shape[:2]
+
+        # Calculate the central vertical line
+        center_x = width // 2
+
+        # Draw a vertical line down the center of the frame
+        cv2.line(tracking_frame, (center_x, 0), (center_x, height), (0, 255, 255), 3) 
+
         
         # Create masks for the colors
         color_mask1 = cv2.inRange(hsv_frame, lower_hsv1, upper_hsv1)
@@ -308,24 +377,99 @@ def run_pipeline():
             # Show Matches
             visualise_image(img_with_matches, "Matches", 25, False)
 
-        # Calculate centroid and add matching key points
+        # Calculate centroid and add matching key points (not addition as in 1+1=2)
         if matches:
             # Filter matches with masks
-            good_points = [scene["features"]["kp"][matches[i][0].trainIdx].pt for i in range(len(matches)) if matches_mask[i][0] and combined_color_mask[int(scene["features"]["kp"][matches[i][0].trainIdx].pt[1]), int(scene["features"]["kp"][matches[i][0].trainIdx].pt[0])] != 0]
+            good_points = [scene["features"]["kp"][matches[i][0].trainIdx].pt for i in range(len(matches)) if matches_mask[i][0] 
+                                            and combined_color_mask[int(scene["features"]["kp"][matches[i][0].trainIdx].pt[1]), 
+                                            int(scene["features"]["kp"][matches[i][0].trainIdx].pt[0])] != 0]
             if good_points:
+                frames_since_last_detection = 0  # Reset the counter
                 centroid_x = int(sum(x for x, y in good_points) / len(good_points))
                 centroid_y = int(sum(y for x, y in good_points) / len(good_points))
-                cv2.circle(tracking_frame, (centroid_x, centroid_y), 5, (0, 0, 255), -1)
+                
+                measurement = np.array([[np.float32(centroid_x)], [np.float32(centroid_y)]])
+                x, y, x2, y2 = update_kalman(kalman, measurement)
+
+                # Draw lines between real, predicted, and corrected positions
+                if run["mode"] == "true":
+                    cv2.line(tracking_frame, (centroid_x, centroid_y), (x2, y2), (0, 0, 0), 2)  # Black line: Real to Predicted
+                    cv2.line(tracking_frame, (centroid_x, centroid_y), (x, y), (255, 255, 255), 2)  # White line: Real to Corrected
+
+                # Add matching kp
                 for point in good_points:
-                    cv2.circle(tracking_frame, (int(point[0]), int(point[1])), 4, (0, 255, 0), -1)
+                    cv2.circle(tracking_frame, (int(point[0]), int(point[1])), 4, (255, 255, 0), -1)
+
+            else:
+                # Using kalman filter (Purple box)
+                if run["mode"] == "true":
+                    # Add object's centroid 
+                    cv2.circle(tracking_frame, (x, y), 5, (255, 0, 255), -1)
+
+                    # Add object's bounding rectangle
+                    tracking_frame = draw_rectangle(tracking_frame, (x, y), 70, 170, color=(255,0,255))
+                x, y = (centroid_x, centroid_y) # Usiing "real" value before kalman filter
+                print("No detection. Using last centroid position before Kalman filter.")
+                if frames_since_last_detection > max_frames_without_detection:
+                    print("Object lost. Stopping tracking.")
+                    break  
+
+                if x is None and y is None:
+                    print("No previous known position. Object not yet detected.")
+                    continue
+                else:
+                    frames_since_last_detection += 1
+
+        if x is not None and y is not None:
+            # Add object's centroid
+            cv2.circle(tracking_frame, (x, y), 5, (0, 0, 255), -1)
+
+            # Add object's bounding rectangle
+            tracking_frame = draw_rectangle(tracking_frame, (x, y), 70, 170)
+
+            # Update centroid buffer
+            centroid_x_buffer.append(x)
+            if len(centroid_x_buffer) > buffer_size:
+                centroid_x_buffer.pop(0)
+
+        # Chek for direction changes
+        if len(centroid_x_buffer) >= 2:
+            old_x = centroid_x_buffer[-2]
+            new_x = centroid_x_buffer[-1]
+
+            # Check crossing from left to right
+            if old_x < center_x and new_x >= center_x:
+                val_l_2_r += 1
+        
+            # Check crossing from right to left
+            if old_x > center_x and new_x <= center_x:
+                val_r_2_l += 1
+
+        # Visualize important data on the frame
+        text_title = "Visual analytics"
+        text_l_2_r = f"Object passing the reference line from left to right: {val_l_2_r}"
+        text_r_2_l = f"Object passing the reference line from right to left: {val_r_2_l}"
+        text_total = f"Total crossings of the reference line in either direction: {val_l_2_r+val_r_2_l }"
+        cv2.putText(tracking_frame, text_title, (15, height - 92), cv2.FONT_HERSHEY_DUPLEX, 0.75, (128, 0, 0), 1)
+        cv2.putText(tracking_frame, text_l_2_r, (15, height - 68), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (128, 0, 0), 1)
+        cv2.putText(tracking_frame, text_r_2_l, (15, height - 44), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (128, 0, 0), 1)
+        cv2.putText(tracking_frame, text_total, (15, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (128, 0, 0), 1)
+
 
         # Show Results
-        visualise_image(tracking_frame, "Traking", picture=False)
+        visualise_image(tracking_frame, "Object Tracking", picture=False)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
         i += 1
+
+    print("Execution Summary:\n", end="\r")
+    print("Object passing the reference line from left to right: {}".format(val_l_2_r),
+            "Object passing the reference line from right to left: {}\n".format(val_r_2_l), 
+            end="\r", sep="\n")
+    print("Shutting down...", end="\r")
     close_windows(scene["path"])
+
 
 if __name__ == "__main__":
     run_pipeline()
