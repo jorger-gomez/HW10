@@ -57,6 +57,25 @@ def parse_user_data() -> tuple[str, str]:
     args = parser.parse_args()
     return args
 
+def resize_image_to_height(img: np.ndarray, target_height: int) -> np.ndarray:
+    """
+    Resize the image so that its height matches the target height.
+
+    Args:
+        img (np.ndarray): Image to resize.
+        target_height (int): Desired height of the image after resizing.
+
+    Returns:
+        np.ndarray: Resized image.
+    """
+    current_height = img.shape[0]
+    scale = target_height / current_height
+    width = int(img.shape[1] * scale)
+    height = int(img.shape[0] * scale)
+    dim = (width, height)
+    resized_img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    return resized_img
+
 def resize_image(img: np.ndarray, scale=100) -> np.ndarray:
     """
     Resize the image to a specified scale for better visualization.
@@ -88,6 +107,7 @@ def visualise_image(img: np.ndarray, title: str, scale=100, picture=True) -> Non
     cv2.imshow(title, resized)
     if picture:
         cv2.waitKey(0)
+    return None
 
 def close_windows(cap):
     """
@@ -97,6 +117,7 @@ def close_windows(cap):
     """
     cap.release()
     cv2.destroyAllWindows()
+    return None
 
 def extract_features(img: np.ndarray, color_space="gray") -> tuple[np.ndarray, np.ndarray]:
     """
@@ -179,8 +200,8 @@ def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tupl
         tuple[np.ndarray, list]: A tuple containing the matches and the mask for good matches.
     """
     # Define FLANN-based matcher parameters
-    index_params = dict(algorithm=1, trees=5)
-    search_params = dict(checks=50)
+    index_params = dict(algorithm=1, trees=350)
+    search_params = dict(checks=1)
 
     # Initialize FLANN matcher
     flann = cv2.FlannBasedMatcher(index_params, search_params)
@@ -212,6 +233,19 @@ def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask
     img = cv2.drawMatchesKnn(img_1["path"], img_1["features"]["kp"], img_2["frame"], img_2["features"]["kp"], matches, None, **draw_params)
     return img
 
+def find_contours(mask):
+    """
+    Find contours in a given mask.
+
+    Args:
+        mask (np.ndarray): Binary mask where contours are to be found.
+
+    Returns:
+        list: List of contour points.
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours
+
 def draw_rectangle(img, centroid, width=100, height=100, color=(0,0,255)):
     """
     Draw a straight bounding rectangle around a set of points.
@@ -232,24 +266,6 @@ def draw_rectangle(img, centroid, width=100, height=100, color=(0,0,255)):
         cv2.rectangle(img, (top_left_x, top_left_y), (top_left_x + width, top_left_y + height), color, 2)
     return img
 
-def initialize_kalman():
-    kalman = cv2.KalmanFilter(4, 2)
-    kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
-    kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-    kalman.processNoiseCov = 1e-4 * np.eye(4, dtype=np.float32) # Adjust this for more/less prediction noise
-    kalman.measurementNoiseCov = 1e-4 * np.array([[1, 0], [0, 1]], np.float32) # Adjust this for more/less measurement noise
-    kalman.errorCovPost = 1e-1 * np.eye(4, dtype=np.float32)
-    return kalman
-
-def update_kalman(kalman, measurement):
-    predicted = kalman.predict()
-    corrected = kalman.correct(measurement)
-    corrected_x = int(corrected[0][0])
-    corrected_y = int(corrected[1][0])
-    predicted_x = int(predicted[0][0])
-    predicted_y = int(predicted[1][0])
-    return corrected_x, corrected_y, predicted_x, predicted_y
-
 def run_pipeline():
     """
     Execute the object detection and tracking pipeline.
@@ -257,218 +273,265 @@ def run_pipeline():
     Returns:
         None
     """
-    # Create dictionaries to contain data
-    print("Initializing...", end="\r")
-    obj =   {"path": "", 
-            "features": {"kp": "", "descriptors": ""}}
-    scene = {"path": "",
-            "features": {"kp": "", "descriptors": ""},
-            "frame": ""}
-    run =   {"scale": "",
-            "mode": ""}
-    
-    # "Running" symbols list
-    symbols = ["\u22ee","\u22f0","\u22ef","\u22f1"]
-    
-    # Counters, buffers and accumulators
-    i_max = len(symbols)
-    i = 0
-    frames_since_last_detection = 0
-    max_frames_without_detection = 5
-    val_l_2_r = 0                       # Counter for left to right crossings
-    val_r_2_l = 0                       # Counter for right to left crossing
-    centroid_x_buffer = []              # Buffer to store the last few centroid's x positions
-    buffer_size = 3                     # Size of the centroid buffer
-    
-    # Parse user's input data
-    user_input = parse_user_data()
-    run["scale"] = user_input.scale_percentage
-    run["mode"] = str.lower(user_input.demo_mode)
+    try:
+        # Create dictionaries to contain data
+        print("Initializing...", end="\r")
+        obj =   {"path": "", 
+                "features": {"kp": "", "descriptors": ""}}
+        scene = {"path": "",
+                "features": {"kp": "", "descriptors": ""},
+                "frame": ""}
+        run =   {"scale": "",
+                "mode": ""}
 
-    # Initialize Kalman Filter
-    print("                                                  ", end="\r")
-    print("Initializing Kalman Filter...", end="\r")
-    kalman = initialize_kalman()
-    
-    # Load images
-    print("                                                  ", end="\r")
-    print("Loading object image...", end="\r")
-    obj["path"] = cv2.imread(user_input.object_image)
+        # "Running" symbols list
+        symbols = ["\u22ee","\u22f0","\u22ef","\u22f1"]
 
-    # Extract img features
-    print("                                                  ", end="\r")
-    print("Extracting object features...", end="\r")
-    obj["features"]["kp"], obj["features"]["descriptors"] = extract_features(obj["path"], "hsv")
+        # Counters, buffers and accumulators
+        i_max = len(symbols)
+        i = 0
+        frames_since_last_detection = 0
+        max_frames_without_detection = 5
+        centroid_x_buffer = []              # Buffer to store the last few centroid's x positions
+        buffer_size = 2                     # Size of the centroid buffer
+        val_l_2_r = 0                       # Counter for left to right crossings
+        val_r_2_l = 0                       # Counter for right to left crossing
+        last_incremented = None             # Can be 'left_to_right' or 'right_to_left
 
-    # Draw Keypoints
-    if run["mode"] == "true":
+        # Parse user's input data
+        user_input = parse_user_data()
+        run["scale"] = user_input.scale_percentage
+        run["mode"] = str.lower(user_input.demo_mode)
         print("                                                  ", end="\r")
-        print("Drawing keypoints...", end="\r")
-        obj_img_with_kp = draw_keypoints(obj)
-
-        # Display image with keypoints
-        visualise_image(obj_img_with_kp, "Object's Keypoints", run["scale"])
-
-    # Define the HSV color range for segmentation
-    lower_hsv1 = np.array([40, 50, 100])  
-    upper_hsv1 = np.array([80, 255, 255])
-    lower_hsv2 = np.array([20, 100, 100])
-    upper_hsv2 = np.array([40, 255, 255])
-    lower_hsv3 = np.array([0, 100, 100])
-    upper_hsv3 = np.array([10, 255, 255])
-    lower_hsv4 = np.array([160, 100, 100])
-    upper_hsv4 = np.array([180, 255, 255])
-
-    # Load video
-    print("                                                  ", end="\r")
-    print("Loading video...", end="\r")
-    scene["path"] = cv2.VideoCapture(user_input.scene_video)
-    
-    # Initialize video frame loop
-    print("                                                  ", end="\r")
-    while True:
-        i = i % i_max
-        print("Tracking {0}".format(symbols[i]), end="\r")
-        ret, scene["frame"] = scene["path"].read()
-        if not ret:
-            break
-
-        # Create an HSV copy of the frame
-        hsv_frame = cv2.cvtColor(copy.deepcopy(scene["frame"]), cv2.COLOR_BGR2HSV)
-
-        # Create a copy of the frame where all the additions will be made
-        tracking_frame = copy.deepcopy(scene["frame"])
-
-        # Get frame dimensions
-        height, width = tracking_frame.shape[:2]
-
-        # Calculate the central vertical line
-        center_x = width // 2
-
-        # Draw a vertical line down the center of the frame
-        cv2.line(tracking_frame, (center_x, 0), (center_x, height), (0, 255, 255), 3) 
-
-        
-        # Create masks for the colors
-        color_mask1 = cv2.inRange(hsv_frame, lower_hsv1, upper_hsv1)
-        color_mask2 = cv2.inRange(hsv_frame, lower_hsv2, upper_hsv2)
-        color_mask3 = cv2.inRange(hsv_frame, lower_hsv3, upper_hsv3)
-        color_mask4 = cv2.inRange(hsv_frame, lower_hsv4, upper_hsv4)
-
-        # Combine the masks
-        combined_color_mask = cv2.bitwise_or(color_mask1, color_mask2)
-        combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask3)
-        combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask4)
-        
-        # Show color mask
+        print("Setting up execution mode...", end="\r")
+        print("                                                  ", end="\r")
         if run["mode"] == "true":
-            cv2.imshow("Mask",combined_color_mask)
+            print("Running in demo mode:\n", end="\r")
+            print('\tTo stop execution press "Ctrl + c" in terminal and then any key with an output window open')
+            print('\tTo avoid any errors, please wait until "Object Tracking" window is open before stoping')
+        else:
+            print("Running in normal mode:\n", end="\r")
+            print("\tTo stop exectuion press q")
+
+        # Load images
+        print("                                                  ", end="\r")
+        print("Loading object image...", end="\r")
+        obj["path"] = cv2.imread(user_input.object_image)
+        if obj["path"] is None:
+            raise Exception("Failed to load the object image.")
+
+        # Load video
+        print("                                                  ", end="\r")
+        print("Loading video...", end="\r")
+        scene["path"] = cv2.VideoCapture(user_input.scene_video)
+        if not scene["path"].isOpened():
+            raise Exception("Failed to open video file.")
+
+        if run["mode"] == "true":
+            # Read the first frame to determine scaling
+            print("                                                  ", end="\r")
+            print("Matching sizes...", end="\r")
+            ret, scene["frame"] = scene["path"].read()
+            if not ret:
+                raise Exception("Failed to read the first frame from the video.")
+            
+            # Resize the object image to match the height of the video frame
+            obj["path"] = resize_image_to_height(obj["path"], scene["frame"].shape[0])
 
         # Extract img features
-        scene["features"]["kp"], scene["features"]["descriptors"] = extract_features(scene["frame"], "hsv")
+        print("                                                  ", end="\r")
+        print("Extracting object features...", end="\r")
+        obj["features"]["kp"], obj["features"]["descriptors"] = extract_features(obj["path"], "hsv")
 
-        # Match features
-        matches, matches_mask = match_features(obj["features"]["descriptors"], scene["features"]["descriptors"])
-
-        # Draw matches
+        # Draw Keypoints
         if run["mode"] == "true":
-            img_with_matches = draw_matches(obj, scene, matches, matches_mask)
+            print("                                                  ", end="\r")
+            print("Drawing keypoints...", end="\r")
+            obj_img_with_kp = draw_keypoints(obj)
 
-            # Show Matches
-            visualise_image(img_with_matches, "Matches", 25, False)
+            # Display image with keypoints
+            visualise_image(obj_img_with_kp, "Object's Keypoints")
 
-        # Calculate centroid and add matching key points (not addition as in 1+1=2)
-        if matches:
-            # Filter matches with masks
-            good_points = [scene["features"]["kp"][matches[i][0].trainIdx].pt for i in range(len(matches)) if matches_mask[i][0] 
-                                            and combined_color_mask[int(scene["features"]["kp"][matches[i][0].trainIdx].pt[1]), 
-                                            int(scene["features"]["kp"][matches[i][0].trainIdx].pt[0])] != 0]
-            if good_points:
-                frames_since_last_detection = 0  # Reset the counter
-                centroid_x = int(sum(x for x, y in good_points) / len(good_points))
-                centroid_y = int(sum(y for x, y in good_points) / len(good_points))
+        # Define the HSV color range for segmentation
+        # Green
+        lower_hsv1 = np.array([40, 50, 100])
+        upper_hsv1 = np.array([80, 255, 255])
+        # Yellow
+        lower_hsv2 = np.array([20, 100, 100])
+        upper_hsv2 = np.array([40, 255, 255])
+        # Reds
+        lower_hsv3 = np.array([0, 100, 100])
+        upper_hsv3 = np.array([10, 255, 255])
+        lower_hsv4 = np.array([160, 100, 100])
+        upper_hsv4 = np.array([180, 255, 255])
+        # White
+        lower_hsv5 = np.array([0, 0, 200])
+        upper_hsv5 = np.array([180, 50, 255])
+
+        # Initialize video frame loop
+        print("                                                  ", end="\r")
+        while True:
+            i = i % i_max
+            print("Tracking {0}".format(symbols[i]), end="\r")
+            ret, scene["frame"] = scene["path"].read()
+            if not ret:
+                break
+
+            # Create an HSV copy of the frame
+            hsv_frame = cv2.cvtColor(copy.deepcopy(scene["frame"]), cv2.COLOR_BGR2HSV)
+
+            # Create a copy of the frame where all the additions will be made
+            tracking_frame = copy.deepcopy(scene["frame"])
+
+            # Get frame dimensions
+            height, width = tracking_frame.shape[:2]
+
+            # Calculate the central vertical line
+            reference_x = (width // 2) + 50
+
+            # Draw a vertical line down the center of the frame
+            cv2.line(tracking_frame, (reference_x, 0), (reference_x, height), (0, 255, 255), 3) 
+
+            # Create masks for the colors
+            color_mask1 = cv2.inRange(hsv_frame, lower_hsv1, upper_hsv1) # Green
+            color_mask2 = cv2.inRange(hsv_frame, lower_hsv2, upper_hsv2) # Yellow
+            color_mask3 = cv2.inRange(hsv_frame, lower_hsv3, upper_hsv3) # Red1
+            color_mask4 = cv2.inRange(hsv_frame, lower_hsv4, upper_hsv4) # Red2
+            color_mask5 = cv2.inRange(hsv_frame, lower_hsv5, upper_hsv5) # White
+
+            # Find contours of the green mask
+            contours = find_contours(color_mask1)  
+
+            # Combine the masks
+            combined_color_mask = cv2.bitwise_or(color_mask1, color_mask2)
+            combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask3)
+            combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask4)
+            combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask5)
+            
+            # Show color mask and mask contour
+            if run["mode"] == "true":
+                cv2.imshow("Mask",combined_color_mask)
+                cv2.drawContours(tracking_frame, contours, -1, (255, 0, 0), 2)
                 
-                measurement = np.array([[np.float32(centroid_x)], [np.float32(centroid_y)]])
-                x, y, x2, y2 = update_kalman(kalman, measurement)
 
-                # Draw lines between real, predicted, and corrected positions
-                if run["mode"] == "true":
-                    cv2.line(tracking_frame, (centroid_x, centroid_y), (x2, y2), (0, 0, 0), 2)  # Black line: Real to Predicted
-                    cv2.line(tracking_frame, (centroid_x, centroid_y), (x, y), (255, 255, 255), 2)  # White line: Real to Corrected
+            # Extract img features
+            scene["features"]["kp"], scene["features"]["descriptors"] = extract_features(scene["frame"], "hsv")
 
-                # Add matching kp
-                for point in good_points:
-                    cv2.circle(tracking_frame, (int(point[0]), int(point[1])), 4, (255, 255, 0), -1)
+            # Match features
+            matches, matches_mask = match_features(obj["features"]["descriptors"], scene["features"]["descriptors"])
 
-            else:
-                # Using kalman filter (Purple box)
-                if run["mode"] == "true":
-                    # Add object's centroid 
-                    cv2.circle(tracking_frame, (x, y), 5, (255, 0, 255), -1)
+            # Draw matches
+            if run["mode"] == "true":
+                img_with_matches = draw_matches(obj, scene, matches, matches_mask)
+
+                # Show Matches
+                visualise_image(img_with_matches, "Matches", 80, False)
+
+            # Calculate centroid and add matching key points (not addition as in 1+1=2)
+            if matches:
+                # Filter matches with masks
+                good_points = [scene["features"]["kp"][matches[i][0].trainIdx].pt for i in range(len(matches)) 
+                                if matches_mask[i][0] 
+                                and (((len(contours) > 0 
+                                    and cv2.pointPolygonTest(contours[0], (int(scene["features"]["kp"][matches[i][0].trainIdx].pt[0]),
+                                    int(scene["features"]["kp"][matches[i][0].trainIdx].pt[1])), True) >= -1)) 
+                                or combined_color_mask[int(scene["features"]["kp"][matches[i][0].trainIdx].pt[1]), 
+                                                int(scene["features"]["kp"][matches[i][0].trainIdx].pt[0])] != 0)]
+                
+                if good_points:
+                    frames_since_last_detection = 0  # Reset the counter
+                    centroid_x = int(sum(x for x, y in good_points) / len(good_points))
+                    centroid_y = int(sum(y for x, y in good_points) / len(good_points))
+
+                    # Add matching kp
+                    for point in good_points:
+                        cv2.circle(tracking_frame, (int(point[0]), int(point[1])), 3, (255, 255, 0), -1)
+
+                    # Add object's centroid
+                    cv2.circle(tracking_frame, (centroid_x, centroid_y), 4, (0, 0, 255), -1)
 
                     # Add object's bounding rectangle
-                    tracking_frame = draw_rectangle(tracking_frame, (x, y), 70, 170, color=(255,0,255))
-                x, y = (centroid_x, centroid_y) # Usiing "real" value before kalman filter
-                print("No detection. Using last centroid position before Kalman filter.")
-                if frames_since_last_detection > max_frames_without_detection:
-                    print("Object lost. Stopping tracking.")
-                    break  
+                    tracking_frame = draw_rectangle(tracking_frame, (centroid_x, centroid_y), 70, 170)
 
-                if x is None and y is None:
-                    print("No previous known position. Object not yet detected.")
-                    continue
+                    # Update centroid buffer
+                    centroid_x_buffer.append(centroid_x)
+                    if len(centroid_x_buffer) > buffer_size:
+                        centroid_x_buffer.pop(0)
+
                 else:
-                    frames_since_last_detection += 1
+                    frames_since_last_detection += 1 
+                    msg = "No object detected!"
+                    text_size = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 1, 1)[0]
+                    text_x = width - text_size[0] - 10  # 10 pixels de margen derecho
+                    cv2.putText(tracking_frame, msg, (text_x, 40), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 255), 1, cv2.LINE_AA)
+                    if frames_since_last_detection > max_frames_without_detection:
+                        print("Object lost for too long! Stopping tracking...")
+                        break       
 
-        if x is not None and y is not None:
-            # Add object's centroid
-            cv2.circle(tracking_frame, (x, y), 5, (0, 0, 255), -1)
+            # Check for direction changes
+            if len(centroid_x_buffer) >= 2:
+                old_x = centroid_x_buffer[-2]
+                new_x = centroid_x_buffer[-1]
 
-            # Add object's bounding rectangle
-            tracking_frame = draw_rectangle(tracking_frame, (x, y), 70, 170)
+                # Check crossing from left to right
+                if old_x < reference_x and new_x >= reference_x:
+                    if last_incremented != 'left_to_right':
+                        val_l_2_r += 1
+                        last_incremented = 'left_to_right'
 
-            # Update centroid buffer
-            centroid_x_buffer.append(x)
-            if len(centroid_x_buffer) > buffer_size:
-                centroid_x_buffer.pop(0)
+                # Check crossing from right to left
+                if old_x > reference_x and new_x <= reference_x:
+                    if last_incremented != 'right_to_left':
+                        val_r_2_l += 1
+                        last_incremented = 'right_to_left'
 
-        # Chek for direction changes
-        if len(centroid_x_buffer) >= 2:
-            old_x = centroid_x_buffer[-2]
-            new_x = centroid_x_buffer[-1]
+            # Visualise important data on the frame
+            texts = ["Visual analytics",
+                    f"Object passing the reference line from left to right: {val_l_2_r}",
+                    f"Object passing the reference line from right to left: {val_r_2_l}",
+                    f"Total crossings of the reference line in either direction: {val_l_2_r + val_r_2_l}"]
 
-            # Check crossing from left to right
-            if old_x < center_x and new_x >= center_x:
-                val_l_2_r += 1
+            y_pos = height - 100  # Comenzar 100 pixeles arriba del borde inferior
+            for text in texts:
+                if text == "Visual analytics":
+                    # Contorno negro
+                    cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 0, 0), 4, cv2.LINE_AA)
+                    # Texto blanco
+                    cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+                else:
+                    # Contorno negro
+                    cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.60, (0, 0, 0), 4, cv2.LINE_AA)
+                    # Texto blanco
+                    cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.60, (255, 255, 255), 1, cv2.LINE_AA)
+                y_pos += 24  # Ajustar la posición y para el siguiente texto
+
+            # Show Results
+            if run["mode"] == "true":
+                visualise_image(tracking_frame, "Object Tracking", picture=True)
+            else:
+                visualise_image(tracking_frame, "Object Tracking", picture=False)
+            
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            i += 1
+
+        print("Execution Summary:\n", end="\r")
+        print("\tObject passing the reference line from left to right: {}".format(val_l_2_r),
+                "\tObject passing the reference line from right to left: {}".format(val_r_2_l),
+                "\tTotal crossings of the reference line in either direction: {}\n".format(val_l_2_r + val_r_2_l),
+                end="\r", sep="\n")
+        print("Shutting down...", end="\r")
+        close_windows(scene["path"])
+
+    except KeyboardInterrupt:
+        print("Execution Summary:\n", end="\r")
+        print("\tObject passing the reference line from left to right: {}".format(val_l_2_r),
+                "\tObject passing the reference line from right to left: {}".format(val_r_2_l),
+                "\tTotal crossings of the reference line in either direction: {}\n".format(val_l_2_r + val_r_2_l),
+                end="\r", sep="\n")
+        print("Shutting down...", end="\r")
+        close_windows(scene["path"])
         
-            # Check crossing from right to left
-            if old_x > center_x and new_x <= center_x:
-                val_r_2_l += 1
-
-        # Visualize important data on the frame
-        text_title = "Visual analytics"
-        text_l_2_r = f"Object passing the reference line from left to right: {val_l_2_r}"
-        text_r_2_l = f"Object passing the reference line from right to left: {val_r_2_l}"
-        text_total = f"Total crossings of the reference line in either direction: {val_l_2_r+val_r_2_l }"
-        cv2.putText(tracking_frame, text_title, (15, height - 92), cv2.FONT_HERSHEY_DUPLEX, 0.75, (128, 0, 0), 1)
-        cv2.putText(tracking_frame, text_l_2_r, (15, height - 68), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (128, 0, 0), 1)
-        cv2.putText(tracking_frame, text_r_2_l, (15, height - 44), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (128, 0, 0), 1)
-        cv2.putText(tracking_frame, text_total, (15, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (128, 0, 0), 1)
-
-
-        # Show Results
-        visualise_image(tracking_frame, "Object Tracking", picture=False)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        i += 1
-
-    print("Execution Summary:\n", end="\r")
-    print("Object passing the reference line from left to right: {}".format(val_l_2_r),
-            "Object passing the reference line from right to left: {}\n".format(val_r_2_l), 
-            end="\r", sep="\n")
-    print("Shutting down...", end="\r")
-    close_windows(scene["path"])
 
 
 if __name__ == "__main__":
