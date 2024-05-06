@@ -10,10 +10,10 @@
 
     Usage Examples:
         Only with requiered arguments:
-            py hw10.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4
+            py object_tracking.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4
         
         With all arguments:
-            py hw10.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4 -scale 15 -demo True
+            py object_tracking.py -obj .\obj_ref\bic.jpg -vid .\scenes\scene_2.mp4 -scale 15 -demo True
 """
 # Import std libraries
 import argparse
