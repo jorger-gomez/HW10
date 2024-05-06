@@ -21,16 +21,20 @@ import copy
 import cv2
 import numpy as np
 
-def parse_user_data() -> tuple[str, str]:
+def parse_user_data() -> tuple[str, str, float, str]:
     """
-    Parse the command-line arguments provided by the user.
+    Parse command-line arguments to get the paths for the object image and video, as well as other parameters for the application.
 
     Returns:
-        tuple[str, str]: A tuple containing the path to the object image and the input image.
+        tuple[str, str, float, str]: A tuple containing the path to the object image, the video file, 
+        the scale percentage, and the demo mode status.
     """
+    # Setup argument parser with descriptions
     parser = argparse.ArgumentParser(prog='CV - HW10',
                                     description="Object detection and tracking application based on SIFT keypoints and descriptors.", 
                                     epilog=' JRGM - 2024')
+    
+    # Define the expected command-line arguments
     parser.add_argument('-obj',
                         '--object_image',
                         type=str,
@@ -59,14 +63,14 @@ def parse_user_data() -> tuple[str, str]:
 
 def resize_image_to_height(img: np.ndarray, target_height: int) -> np.ndarray:
     """
-    Resize the image so that its height matches the target height.
+    Resize the image to match a specified target height while preserving the aspect ratio.
 
     Args:
-        img (np.ndarray): Image to resize.
-        target_height (int): Desired height of the image after resizing.
+        img (np.ndarray): The image to be resized.
+        target_height (int): The target height in pixels.
 
     Returns:
-        np.ndarray: Resized image.
+        np.ndarray: The resized image.
     """
     current_height = img.shape[0]
     scale = target_height / current_height
@@ -92,13 +96,15 @@ def resize_image(img: np.ndarray, scale=100) -> np.ndarray:
     resized_img = cv2.resize(img, dim, interpolation = cv2.INTER_AREA)
     return resized_img
 
-def visualise_image(img: np.ndarray, title: str, scale=100, picture=True) -> None:
+def visualise_image(img: np.ndarray, title: str, scale: int = 100, picture: bool = True) -> None:
     """
-    Display the image in a window with a title.
+    Display an image in a window with a specified title and scale.
 
     Args:
-        img (np.ndarray): Image to display.
-        title (str): Title of the window.
+        img (np.ndarray): The image to display.
+        title (str): The title of the window.
+        scale (int): Percentage to scale the image for display.
+        picture (bool): Flag to wait for a key press if true.
 
     Returns:
         None
@@ -109,7 +115,7 @@ def visualise_image(img: np.ndarray, title: str, scale=100, picture=True) -> Non
         cv2.waitKey(0)
     return None
 
-def close_windows(cap):
+def close_windows(cap) -> None:
     """
     Close & destroy OpenCV windows
 
@@ -119,19 +125,20 @@ def close_windows(cap):
     cv2.destroyAllWindows()
     return None
 
-def extract_features(img: np.ndarray, color_space="gray") -> tuple[np.ndarray, np.ndarray]:
+def extract_features(img: np.ndarray, color_space: str = "gray") -> tuple[np.ndarray, np.ndarray]:
     """
-    Extract SIFT features from the image.
+    Extract SIFT features from the image using a specified color space.
 
     Args:
-        img (np.ndarray): Image data in which to find keypoints.
+        img (np.ndarray): The image from which to extract features.
+        color_space (str): Color space conversion before feature extraction ('gray', 'hsv', 'bgr').
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: A tuple containing the keypoints and descriptors for the image.
+        tuple[np.ndarray, np.ndarray]: A tuple of keypoints and descriptors.
     """
+    # Convert the image to the specified color space
     match color_space:
         case "gray": 
-            # Convert image to grayscale
             color_space = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         case "hsv":
@@ -154,10 +161,10 @@ def draw_keypoints(img: np.ndarray, color_space="gray", kp_type="rich") -> np.nd
     Returns:
         np.ndarray: Image with keypoints drawn.
     """
+    # Check if it is a frame or a picture, then Convert to the specified color space
     if "frame" in img:
         match color_space:
             case "gray": 
-                # Convert image to grayscale
                 color_space = cv2.cvtColor(img["frame"], cv2.COLOR_BGR2GRAY)
 
             case "hsv":
@@ -169,7 +176,6 @@ def draw_keypoints(img: np.ndarray, color_space="gray", kp_type="rich") -> np.nd
     else:
         match color_space:
             case "gray": 
-                # Convert image to grayscale
                 color_space = cv2.cvtColor(img["path"], cv2.COLOR_BGR2GRAY)
 
             case "hsv":
@@ -178,6 +184,7 @@ def draw_keypoints(img: np.ndarray, color_space="gray", kp_type="rich") -> np.nd
             case "bgr":
                 color_space = img["path"]
 
+    # Choose kp type to be displayed
     match kp_type:
         case "rich":
             img_with_kp = cv2.drawKeypoints(color_space, img["features"]["kp"], None, color=(0,255,0),
@@ -216,18 +223,18 @@ def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tupl
             matches_mask[i] = [1, 0]
     return matches, matches_mask
 
-def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask: list) -> np.ndarray:
+def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: list[cv2.DMatch], mask: list[int]) -> np.ndarray:
     """
-    Draw matches between two images.
+    Draw lines between matching keypoints in two images.
 
     Args:
-        img_1 (np.ndarray): First image.
-        img_2 (np.ndarray): Second image.
-        matches (np.ndarray): Matched features.
-        mask (list): Mask for good matches.
+        img1 (np.ndarray): First image.
+        img2 (np.ndarray): Second image.
+        matches (list[cv2.DMatch]): List of matched keypoints.
+        mask (list[int]): List indicating which matches are good.
 
     Returns:
-        np.ndarray: Image with matches drawn.
+        np.ndarray: The image with drawn matches.
     """
     draw_params = dict(matchColor=(0, 255, 0), singlePointColor=(255, 0, 0), matchesMask=mask, flags=cv2.DrawMatchesFlags_DEFAULT)
     img = cv2.drawMatchesKnn(img_1["path"], img_1["features"]["kp"], img_2["frame"], img_2["features"]["kp"], matches, None, **draw_params)
@@ -266,7 +273,7 @@ def draw_rectangle(img, centroid, width=100, height=100, color=(0,0,255)):
         cv2.rectangle(img, (top_left_x, top_left_y), (top_left_x + width, top_left_y + height), color, 2)
     return img
 
-def run_pipeline():
+def run_pipeline() -> None:
     """
     Execute the object detection and tracking pipeline.
 
@@ -274,7 +281,7 @@ def run_pipeline():
         None
     """
     try:
-        # Create dictionaries to contain data
+        # Create dictionaries to contain data for object, scene, and runtime parameters
         print("Initializing...", end="\r")
         obj =   {"path": "", 
                 "features": {"kp": "", "descriptors": ""}}
@@ -284,21 +291,21 @@ def run_pipeline():
         run =   {"scale": "",
                 "mode": ""}
 
-        # "Running" symbols list
+        # "Tracking" symbols list
         symbols = ["\u22ee","\u22f0","\u22ef","\u22f1"]
 
-        # Counters, buffers and accumulators
+        # Initialize counters and buffers for tracking and direction change detection
         i_max = len(symbols)
-        i = 0
-        frames_since_last_detection = 0
-        max_frames_without_detection = 5
+        i = 0                               # Symbol index
+        frames_since_last_detection = 0     
+        max_frames_without_detection = 5    # Must be bigger than 0
         centroid_x_buffer = []              # Buffer to store the last few centroid's x positions
         buffer_size = 2                     # Size of the centroid buffer
         val_l_2_r = 0                       # Counter for left to right crossings
         val_r_2_l = 0                       # Counter for right to left crossing
         last_incremented = None             # Can be 'left_to_right' or 'right_to_left
 
-        # Parse user's input data
+        # Parse command-line arguments to get user-specified configurations
         user_input = parse_user_data()
         run["scale"] = user_input.scale_percentage
         run["mode"] = str.lower(user_input.demo_mode)
@@ -313,14 +320,14 @@ def run_pipeline():
             print("Running in normal mode:\n", end="\r")
             print("\tTo stop exectuion press q")
 
-        # Load images
+        # Load the object image and validate it
         print("                                                  ", end="\r")
         print("Loading object image...", end="\r")
         obj["path"] = cv2.imread(user_input.object_image)
         if obj["path"] is None:
             raise Exception("Failed to load the object image.")
 
-        # Load video
+        # Load the video and validate it
         print("                                                  ", end="\r")
         print("Loading video...", end="\r")
         scene["path"] = cv2.VideoCapture(user_input.scene_video)
@@ -328,31 +335,28 @@ def run_pipeline():
             raise Exception("Failed to open video file.")
 
         if run["mode"] == "true":
-            # Read the first frame to determine scaling
+            # Adjust object image size to match video frame size for better comparison
             print("                                                  ", end="\r")
             print("Matching sizes...", end="\r")
             ret, scene["frame"] = scene["path"].read()
             if not ret:
                 raise Exception("Failed to read the first frame from the video.")
             
-            # Resize the object image to match the height of the video frame
             obj["path"] = resize_image_to_height(obj["path"], scene["frame"].shape[0])
 
-        # Extract img features
+        # Extract features from the object image using SIFT
         print("                                                  ", end="\r")
         print("Extracting object features...", end="\r")
         obj["features"]["kp"], obj["features"]["descriptors"] = extract_features(obj["path"], "hsv")
 
-        # Draw Keypoints
+        # Optionally, draw keypoints on the object image for visualization in demo mode
         if run["mode"] == "true":
             print("                                                  ", end="\r")
             print("Drawing keypoints...", end="\r")
             obj_img_with_kp = draw_keypoints(obj)
-
-            # Display image with keypoints
             visualise_image(obj_img_with_kp, "Object's Keypoints")
 
-        # Define the HSV color range for segmentation
+        # Define HSV color ranges for object segmentation by color
         # Green
         lower_hsv1 = np.array([40, 50, 100])
         upper_hsv1 = np.array([80, 255, 255])
@@ -368,7 +372,7 @@ def run_pipeline():
         lower_hsv5 = np.array([0, 0, 200])
         upper_hsv5 = np.array([180, 50, 255])
 
-        # Initialize video frame loop
+        # Initialize the main video processing loop
         print("                                                  ", end="\r")
         while True:
             i = i % i_max
@@ -377,7 +381,7 @@ def run_pipeline():
             if not ret:
                 break
 
-            # Create an HSV copy of the frame
+            # Convert the current video frame to HSV for color-based processing
             hsv_frame = cv2.cvtColor(copy.deepcopy(scene["frame"]), cv2.COLOR_BGR2HSV)
 
             # Create a copy of the frame where all the additions will be made
@@ -386,13 +390,13 @@ def run_pipeline():
             # Get frame dimensions
             height, width = tracking_frame.shape[:2]
 
-            # Calculate the central vertical line
+            # Calculate the position of vertical reference line
             reference_x = (width // 2) + 50
 
             # Draw a vertical line down the center of the frame
             cv2.line(tracking_frame, (reference_x, 0), (reference_x, height), (0, 255, 255), 3) 
 
-            # Create masks for the colors
+            # Generate masks for different color segments and find contours
             color_mask1 = cv2.inRange(hsv_frame, lower_hsv1, upper_hsv1) # Green
             color_mask2 = cv2.inRange(hsv_frame, lower_hsv2, upper_hsv2) # Yellow
             color_mask3 = cv2.inRange(hsv_frame, lower_hsv3, upper_hsv3) # Red1
@@ -408,28 +412,24 @@ def run_pipeline():
             combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask4)
             combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask5)
             
-            # Show color mask and mask contour
+            # # Optionally, Show color mask and draw mask contour on the tracking frame for visualization in demo mode
             if run["mode"] == "true":
                 cv2.imshow("Mask",combined_color_mask)
                 cv2.drawContours(tracking_frame, contours, -1, (255, 0, 0), 2)
                 
 
-            # Extract img features
+            # Extract features from the video frame and match with the object feature
             scene["features"]["kp"], scene["features"]["descriptors"] = extract_features(scene["frame"], "hsv")
-
-            # Match features
             matches, matches_mask = match_features(obj["features"]["descriptors"], scene["features"]["descriptors"])
 
-            # Draw matches
+            # Optionally draw and display matches in demo mode
             if run["mode"] == "true":
                 img_with_matches = draw_matches(obj, scene, matches, matches_mask)
-
-                # Show Matches
                 visualise_image(img_with_matches, "Matches", 80, False)
 
-            # Calculate centroid and add matching key points (not addition as in 1+1=2)
+            # Calculate centroid of matching points to track the object
             if matches:
-                # Filter matches with masks
+                # Filter "good points"
                 good_points = [scene["features"]["kp"][matches[i][0].trainIdx].pt for i in range(len(matches)) 
                                 if matches_mask[i][0] 
                                 and (((len(contours) > 0 
@@ -458,17 +458,18 @@ def run_pipeline():
                     if len(centroid_x_buffer) > buffer_size:
                         centroid_x_buffer.pop(0)
 
+                # What to do when object is not detected
                 else:
                     frames_since_last_detection += 1 
-                    msg = "No object detected!"
+                    msg = "Object lost!"
                     text_size = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 1, 1)[0]
-                    text_x = width - text_size[0] - 10  # 10 pixels de margen derecho
+                    text_x = width - text_size[0] - 10  # 10 pixels margin on the right
                     cv2.putText(tracking_frame, msg, (text_x, 40), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 255), 1, cv2.LINE_AA)
                     if frames_since_last_detection > max_frames_without_detection:
                         print("Object lost for too long! Stopping tracking...")
                         break       
 
-            # Check for direction changes
+            # Check for direction changes based on the centroid's position relative to the reference line
             if len(centroid_x_buffer) >= 2:
                 old_x = centroid_x_buffer[-2]
                 new_x = centroid_x_buffer[-1]
@@ -485,36 +486,37 @@ def run_pipeline():
                         val_r_2_l += 1
                         last_incremented = 'right_to_left'
 
-            # Visualise important data on the frame
+            # Display tracking and crossing information on the frame
             texts = ["Visual analytics",
                     f"Object passing the reference line from left to right: {val_l_2_r}",
                     f"Object passing the reference line from right to left: {val_r_2_l}",
                     f"Total crossings of the reference line in either direction: {val_l_2_r + val_r_2_l}"]
 
-            y_pos = height - 100  # Comenzar 100 pixeles arriba del borde inferior
+            y_pos = height - 100  # Start 100 pixels above the bottom edge
             for text in texts:
                 if text == "Visual analytics":
-                    # Contorno negro
+                    # Black edge
                     cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 0, 0), 4, cv2.LINE_AA)
-                    # Texto blanco
+                    # White text
                     cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
                 else:
-                    # Contorno negro
+                    # Black edge
                     cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.60, (0, 0, 0), 4, cv2.LINE_AA)
-                    # Texto blanco
+                    # White text
                     cv2.putText(tracking_frame, text, (15, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.60, (255, 255, 255), 1, cv2.LINE_AA)
-                y_pos += 24  # Ajustar la posición y para el siguiente texto
+                y_pos += 24  # Adjust y position for the next text
 
-            # Show Results
+            # Display the tracking frame
             if run["mode"] == "true":
                 visualise_image(tracking_frame, "Object Tracking", picture=True)
             else:
                 visualise_image(tracking_frame, "Object Tracking", picture=False)
             
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord('q'): # waiting for a 'q' key press to quit in non-demo mode
                 break
             i += 1
 
+        # Print a summary of object crossings after the loop finishes
         print("Execution Summary:\n", end="\r")
         print("\tObject passing the reference line from left to right: {}".format(val_l_2_r),
                 "\tObject passing the reference line from right to left: {}".format(val_r_2_l),
@@ -523,6 +525,7 @@ def run_pipeline():
         print("Shutting down...", end="\r")
         close_windows(scene["path"])
 
+    # Handle a keyboard interrupt for graceful shutdown
     except KeyboardInterrupt:
         print("Execution Summary:\n", end="\r")
         print("\tObject passing the reference line from left to right: {}".format(val_l_2_r),
@@ -531,8 +534,8 @@ def run_pipeline():
                 end="\r", sep="\n")
         print("Shutting down...", end="\r")
         close_windows(scene["path"])
-        
-
+    
+    return None 
 
 if __name__ == "__main__":
     run_pipeline()
