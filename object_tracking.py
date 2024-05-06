@@ -187,7 +187,7 @@ def draw_keypoints(img: np.ndarray, color_space="gray", kp_type="rich") -> np.nd
     # Choose kp type to be displayed
     match kp_type:
         case "rich":
-            img_with_kp = cv2.drawKeypoints(color_space, img["features"]["kp"], None, color=(0,255,0),
+            img_with_kp = cv2.drawKeypoints(color_space, img["features"]["kp"], None, color=(255,255,0),
                                             flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
         case _:
@@ -353,7 +353,7 @@ def run_pipeline() -> None:
         if run["mode"] == "true":
             print("                                                  ", end="\r")
             print("Drawing keypoints...", end="\r")
-            obj_img_with_kp = draw_keypoints(obj)
+            obj_img_with_kp = draw_keypoints(obj, "hsv")
             visualise_image(obj_img_with_kp, "Object's Keypoints")
 
         # Define HSV color ranges for object segmentation by color
@@ -555,4 +555,23 @@ if __name__ == "__main__":
 
 """
     References:
+    
+    [1]“print() and Standard Out.” Accessed: May 05, 2024. [Online]. 
+        Available: https://cs.stanford.edu/people/nick/py/python-print.html
+
+    [2]“OpenCV: Contour Features.” Accessed: May 05, 2024. [Online]. 
+        Available: https://docs.opencv.org/4.x/dd/d49/tutorial_py_contour_features.html
+    
+    [3]“OpenCV: Point Polygon Test.” Accessed: May 05, 2024. [Online]. 
+        Available: https://docs.opencv.org/4.x/dc/d48/tutorial_point_polygon_test.html
+    
+    [4]“OpenCV: Feature Matching with FLANN.” Accessed: May 05, 2024. [Online]. 
+        Available: https://docs.opencv.org/4.x/d5/d6f/tutorial_feature_flann_matcher.html
+    
+    [5]“OpenCV: Feature Matching.” Accessed: May 05, 2024. [Online]. 
+        Available: https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
+    
+    [6]“OpenCV: Introduction to SIFT (Scale-Invariant Feature Transform).” Accessed: May 05, 2024. 
+        [Online]. Available: https://docs.opencv.org/4.x/da/df5/tutorial_py_sift_intro.html
+  
 """
