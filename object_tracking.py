@@ -44,7 +44,7 @@ def parse_user_data() -> tuple[str, str, float, str]:
                         '--scene_video',
                         type=str,
                         required=True,
-                        help="Path to the vide where we want to detect the object")
+                        help="Path to the video where we want to detect the object")
     parser.add_argument('-scale',
                         '--scale_percentage',
                         type=float,
@@ -412,7 +412,7 @@ def run_pipeline() -> None:
             combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask4)
             combined_color_mask = cv2.bitwise_or(combined_color_mask, color_mask5)
             
-            # # Optionally, Show color mask and draw mask contour on the tracking frame for visualization in demo mode
+            # Optionally, Show color mask and draw mask contour on the tracking frame for visualization in demo mode
             if run["mode"] == "true":
                 cv2.imshow("Mask",combined_color_mask)
                 cv2.drawContours(tracking_frame, contours, -1, (255, 0, 0), 2)
@@ -573,5 +573,4 @@ if __name__ == "__main__":
     
     [6]“OpenCV: Introduction to SIFT (Scale-Invariant Feature Transform).” Accessed: May 05, 2024. 
         [Online]. Available: https://docs.opencv.org/4.x/da/df5/tutorial_py_sift_intro.html
-  
 """
